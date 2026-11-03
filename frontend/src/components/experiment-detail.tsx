@@ -1,0 +1,24 @@
+'use client';
+import { useState } from 'react';
+import { Check, BookmarkPlus, Download, X } from 'lucide-react';
+import { post, endpoint, type Experiment, type Model } from '@/lib/api';
+import { Panel, MetricCards, Badge, nice, score, ErrorBox, Busy } from './ui';
+export default function ExperimentDetail({ experiment: e, models, refresh, close }: { experiment: Experiment; models: Model[]; refresh: () => Promise<void>; close: () => void }) {
+  const [name, setName] = useState(nice(e.algorithm));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const registered = models.find(m => m.experiment_id === e.id);
+  const matrix = e.metrics.confusion_matrix as number[][] | undefined;
+  const labels = e.metrics.labels as string[] | undefined;
+  async function register() {
+    setBusy(true); setError('');
+    try { await post('/models', { experiment_id: e.id, name }); await refresh(); }
+    catch (err) { setError((err as Error).message); } finally { setBusy(false); }
+  }
+  return <div className="stack experiment-detail"><Panel title={`${nice(e.algorithm)} · ${e.id.slice(0,8)}`} aside={<div className="actions"><Badge value={e.status} /><button className="icon-button" aria-label="Close experiment detail" onClick={close}><X size={18} /></button></div>}><div className="detail-meta"><span>{nice(e.task)}</span><span>{e.details.train_rows != null ? `${e.details.train_rows} train / ${e.details.test_rows} test` : 'All rows'}</span><span>Seed {String(e.config.seed)}</span><span>{e.duration?.toFixed(3)} seconds</span></div>{e.error && <div className="padded"><ErrorBox message={e.error} /></div>}{e.status === 'succeeded' && <div className="padded"><MetricCards metrics={e.metrics} /><p className="help">{e.details.evaluation}</p>{e.metrics.positive_class != null && <p className="help">Positive class: {String(e.metrics.positive_class)}. Macro metrics weight each class equally; weighted metrics use class support. Undefined class precision/recall is reported as zero.</p>}{e.metrics.roc_auc_definition != null && <p className="help">ROC-AUC: {String(e.metrics.roc_auc_definition)}.</p>}{e.details.warnings?.map((w,i) => <div className="notice warning" key={i}>{w}</div>)}{error && <ErrorBox message={error} />}<div className="register-row">{registered ? <><span className="success-text"><Check size={16} />Registered as {registered.name}</span><a className="button" href={endpoint(`/models/${registered.id}/export`)}><Download size={16} />Export artifact</a></> : <form onSubmit={event => { event.preventDefault(); void register(); }}><label>Model name<input value={name} maxLength={100} required onChange={ev => setName(ev.target.value)} /></label><button className="primary" disabled={busy}>{busy ? <Busy /> : <><BookmarkPlus size={16} />Register model</>}</button></form>}</div></div>}</Panel>
+    {matrix && labels && <Panel title="Confusion matrix" aside={<span className="muted">Rows: actual · Columns: predicted</span>}><div className="table-scroll"><table className="confusion"><thead><tr><th>Actual / Predicted</th>{labels.map(l => <th key={l}>{l}</th>)}</tr></thead><tbody>{matrix.map((row,i) => <tr key={i}><th>{labels[i]}</th>{row.map((v,j) => <td key={j} className={i===j ? 'diagonal' : ''}>{v}</td>)}</tr>)}</tbody></table></div></Panel>}
+    {e.details.class_distribution && <Panel title="Class distribution"><div className="table-scroll"><table><thead><tr><th>Class</th><th>Dataset</th><th>Training</th><th>Test</th></tr></thead><tbody>{Object.entries(e.details.class_distribution).map(([label,total]) => { const test=(e.metrics.test_class_distribution as Record<string,number> | undefined)?.[label] || 0; return <tr key={label}><td>{label}</td><td>{total}</td><td>{total-test}</td><td>{test}</td></tr>; })}</tbody></table></div></Panel>}
+    {e.metrics.cluster_distribution && <Panel title="Cluster distribution & summaries"><div className="table-scroll"><table><thead><tr><th>Cluster</th><th>Samples</th>{Object.keys(Object.values(e.details.cluster_summaries || {})[0] || {}).map(c => <th key={c}>Mean {c}</th>)}</tr></thead><tbody>{Object.entries(e.metrics.cluster_distribution as Record<string,number>).map(([cluster,n]) => <tr key={cluster}><td>{cluster}</td><td>{n}</td>{Object.entries(e.details.cluster_summaries?.[cluster] || {}).map(([c,v]) => <td key={c}>{score(v)}</td>)}</tr>)}</tbody></table></div><details className="padded"><summary>All row assignments (original row order)</summary><pre>{JSON.stringify(e.details.assignments)}</pre></details></Panel>}
+    <Panel title="Experiment configuration"><pre>{JSON.stringify({ experiment_id:e.id, dataset_id:e.dataset_id, started_at:e.started_at, finished_at:e.finished_at, ...e.config, split_fingerprint:e.details.split_fingerprint, features:e.details.features },null,2)}</pre></Panel>
+  </div>;
+}

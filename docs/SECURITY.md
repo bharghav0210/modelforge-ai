@@ -1,0 +1,17 @@
+# Security and local-use limitations
+
+This is a trusted-local, single-user portfolio MVP. It has no authentication, tenant isolation or public-service security guarantees. Bind only to loopback. Do not expose it with port forwarding or a public reverse proxy. Restrict access to the workstation and data directory. Local processes with filesystem access are trusted.
+
+Uploads accept UTF-8 CSV and single-sheet XLSX only: at most 10 MiB, 10,000 rows and 100 columns. Headers must be nonempty and unique. CSV records must have the exact header width; invalid encodings, malformed quoting and infinity are rejected. XLSX expanded content is limited to 50 MiB, and worksheet dimensions are checked. No columns are silently dropped during upload. Upload limits are enforced on the file content; the trusted-local app does not include a reverse-proxy limit on total HTTP multipart body bytes.
+
+Original filenames are display metadata only. Server-generated UUID names locate uploads and artifacts. Controlled path resolution rejects traversal and escaped symlinks. Database references are never accepted as arbitrary client filesystem paths. Export and inference look up a registered model and its successful experiment. No endpoint imports user-supplied pickle/joblib files or executes user-supplied code. Numerical inference fields must be finite numbers, and fields must exactly match the training schema. Settings have safe ranges; only one training request runs at a time.
+
+**Joblib/pickle artifacts are executable trusted code. Never deserialize a model from an untrusted source.** The application loads only artifacts it generated and registered. A malicious local user who can tamper with artifacts or metadata can defeat that trust boundary. Artifact export is for trusted environments with matching library versions, not an interchange security format.
+
+Metadata, original data, model artifacts and prediction inputs/outputs are retained locally without encryption or an automatic retention policy. Avoid uploading sensitive data; access controls and backup practices are the workstation owner's responsibility. Referenced datasets cannot be deleted because that would break history. No experiment-delete or model-import API is included. Tests use disposable temporary storage rather than the user's database.
+
+Ollama is optional and addressed by a process environment setting, not a browser-supplied URL. Requests bypass proxy environment variables, use bounded prompts, temperature, context and response tokens, and timeout. No paid API, model download or simulated response is used. Model generation may consume resources in the external provider. Provider failure does not disable other modules.
+
+API errors use a consistent error envelope. Validation details are shown for user repair; unexpected errors are logged locally and return a generic message. CORS permits only the two local frontend origins; CORS is not authentication. A training lock is process-local, so run the supplied single-process launcher. There is no OS-level CPU/memory quota, hard training timeout, cancellation, malware scanning or hostile-document sandbox. Keep this app within its intended trusted use.
+
+Dependencies are pinned for Python and locked for npm. Review `npm audit` findings before widening use; do not blindly apply breaking automatic upgrades. See VERIFICATION.md for findings from this run. No credentials or generated runtime data belong in source control. No GitHub push is performed by the implementation workflow.

@@ -1,0 +1,94 @@
+import { test, expect } from './support';
+import path from 'node:path';
+import fs from 'node:fs';
+
+test('complete local model-development journey', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const samples=path.resolve('..','samples');
+  await page.goto('/');
+  await expect(page.getByText('Local API connected')).toBeVisible();
+  await page.screenshot({path:'../docs/screenshots/overview-empty.png',fullPage:true});
+  async function nav(label: string) {
+    const routes: Record<string, string> = { Overview: '/', Datasets: '/datasets', AutoML: '/automl', AutoNLP: '/autonlp', 'Neural Network Lab': '/neural', 'GenAI Lab': '/genai', Experiments: '/experiments', 'Model Registry': '/models', Settings: '/settings' };
+    await page.getByRole('navigation').getByRole('link',{name:label==='GenAI Lab' ? 'GenAI Lab LOCAL' : label,exact:true}).click();
+    await expect(page).toHaveURL(`http://localhost:3003${routes[label]}`);
+    await expect(page.getByRole('heading',{name:label==='Overview' ? 'Workspace overview' : label,exact:true,level:1})).toBeVisible();
+    await expect(page.getByText('Local API connected')).toBeVisible();
+  }
+  await nav('Datasets');
+  await page.locator('main:visible').getByLabel('Upload dataset',{exact:true}).setInputFiles(path.join(samples,'customer_churn.csv'));
+  await expect(page.getByRole('heading',{name:'customer_churn.csv',exact:true})).toBeVisible();
+  await expect(page.getByRole('columnheader',{name:/^age/})).toBeVisible();
+  await nav('AutoML');
+  await page.locator('main:visible').getByLabel('Target column').selectOption('churn');
+  const response=page.waitForResponse(r=>r.url().endsWith('/automl/train') && r.request().method()==='POST');
+  await page.getByRole('button',{name:'Train model',exact:true}).click();
+  const first=await (await response).json();
+  expect(first.status).toBe('succeeded');expect(first.metrics.accuracy).toBeGreaterThan(0);
+  await expect(page.getByRole('heading',{name:'Confusion matrix'})).toBeVisible();
+  await page.screenshot({path:'../docs/screenshots/classification.png',fullPage:true});
+  await page.locator('main:visible').getByLabel('Model name').fill('Browser churn model');
+  await page.getByRole('button',{name:'Register model',exact:true}).click();
+  await expect(page.getByText('Registered as Browser churn model')).toBeVisible();
+  const downloadEvent=page.waitForEvent('download');
+  await page.getByRole('link',{name:'Export artifact'}).click();
+  const download=await downloadEvent;const file=await download.path();expect(fs.statSync(file!).size).toBeGreaterThan(100);
+  await nav('Model Registry');
+  await page.locator('main:visible').getByLabel('age',{exact:true}).fill('37');
+  await page.locator('main:visible').getByLabel('contract',{exact:true}).fill('unseen contract');
+  const inferResponse=page.waitForResponse(r=>r.url().endsWith('/predict') && r.request().method()==='POST');
+  await page.getByRole('button',{name:'Run inference'}).click();
+  const inference=await (await inferResponse).json();expect(inference.predictions).toHaveLength(1);
+  await expect(page.getByText('MODEL OUTPUT',{exact:true})).toBeVisible();
+  await page.screenshot({path:'../docs/screenshots/prediction.png',fullPage:true});
+  await nav('AutoML');await page.locator('main:visible').getByLabel('Target column').selectOption('churn');await page.getByRole('combobox',{name:'Algorithm',exact:true}).selectOption('random_forest_classifier');
+  const secondEvent=page.waitForResponse(r=>r.url().endsWith('/automl/train') && r.request().method()==='POST');
+  await page.getByRole('button',{name:'Train model',exact:true}).click();
+  const second=await (await secondEvent).json();expect(second.status).toBe('succeeded');
+  await nav('Experiments');
+  await page.locator('main:visible').getByLabel(`Compare ${first.id.slice(0,8)}`).check();await page.locator('main:visible').getByLabel(`Compare ${second.id.slice(0,8)}`).check();
+  await page.getByRole('button',{name:'Compare 2 runs'}).click();await expect(page.getByText(/Best run by/)).toBeVisible();
+  await nav('Datasets');
+  for (const file of ['house_prices.csv','product_reviews.csv','customer_segments.csv']) {
+    await page.locator('main:visible').getByLabel('Upload dataset',{exact:true}).setInputFiles(path.join(samples,file));
+    await expect(page.getByRole('heading',{name:file,exact:true})).toBeVisible();
+  }
+  await nav('AutoNLP');await page.getByRole('combobox',{name:'Dataset',exact:true}).selectOption({label:'product_reviews.csv · 180 rows'});
+  await page.locator('main:visible').getByLabel('Target column').selectOption('sentiment');await page.locator('main:visible').getByLabel('Text column').selectOption('review');
+  const nlpEvent=page.waitForResponse(r=>r.url().endsWith('/autonlp/train'));
+  await page.getByRole('button',{name:'Train model',exact:true}).click();const nlp=await (await nlpEvent).json();expect(nlp.status).toBe('succeeded');
+  await nav('AutoML');await page.getByRole('combobox',{name:'Dataset',exact:true}).selectOption({label:'customer_segments.csv · 240 rows'});await page.locator('main:visible').getByLabel('Learning task').selectOption('clustering');
+  const clusterEvent=page.waitForResponse(r=>r.url().endsWith('/automl/train') && r.request().method()==='POST');
+  await page.getByRole('button',{name:'Train model',exact:true}).click();const cluster=await (await clusterEvent).json();expect(cluster.status).toBe('succeeded');await expect(page.getByRole('heading',{name:'Cluster distribution & summaries'})).toBeVisible();
+  await nav('AutoML');await page.getByRole('combobox',{name:'Dataset',exact:true}).selectOption({label:'house_prices.csv · 240 rows'});await page.locator('main:visible').getByLabel('Learning task').selectOption('regression');await page.locator('main:visible').getByLabel('Target column').selectOption('price');
+  const regressionEvent=page.waitForResponse(r=>r.url().endsWith('/automl/train') && r.request().method()==='POST');
+  await page.getByRole('button',{name:'Train model',exact:true}).click();const regression=await (await regressionEvent).json();expect(regression.status).toBe('succeeded');
+  await nav('Neural Network Lab');await expect(page.getByRole('heading',{name:'CPU-friendly neural-network baseline'})).toBeVisible();
+  await page.getByRole('combobox',{name:'Dataset',exact:true}).selectOption({label:'customer_churn.csv · 240 rows'});await page.locator('main:visible').getByLabel('Target column').selectOption('churn');
+  const neuralEvent=page.waitForResponse(r=>r.url().endsWith('/neural/train'));
+  await page.getByRole('button',{name:'Train model',exact:true}).click();const neural=await (await neuralEvent).json();expect(neural.status).toBe('succeeded');
+  await nav('GenAI Lab');await expect(page.getByText(/Local provider (offline|connected)/)).toBeVisible();
+  await nav('Settings');await expect(page.getByRole('heading',{name:'Local environment'})).toBeVisible();
+  await nav('Experiments');await page.reload();await expect(page.getByRole('button',{name:'Logistic Regression',exact:true})).toBeVisible();
+  await nav('Overview');await expect(page.getByRole('heading',{name:'Workspace overview'})).toBeVisible();
+  await page.screenshot({path:'../docs/screenshots/overview-trained.png',fullPage:true});
+  fs.writeFileSync('../docs/browser-evidence.json',JSON.stringify({first,second,inference,nlp,cluster,regression,neural,provider:await page.evaluate(async()=> (await fetch('http://localhost:8003/api/v1/genai/status')).json()),verified_at:new Date().toISOString()},null,2));
+  expect(errors).toEqual([]);
+});
+
+test('mobile navigation and destructive confirmation', async ({ page }) => {
+  await page.setViewportSize({width:390,height:844});await page.goto('/');
+  await page.getByRole('button',{name:'Open navigation'}).click();
+  await page.getByRole('navigation').getByRole('link',{name:'Datasets',exact:true}).click();
+  await expect(page.getByRole('heading',{name:'Datasets',exact:true})).toBeVisible();
+  await page.locator('main:visible').getByLabel('Upload dataset',{exact:true}).setInputFiles(path.resolve('..','samples','customer_segments.csv'));
+  await expect(page.getByRole('heading',{name:'customer_segments.csv',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Delete dataset',exact:true}).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button',{name:'Cancel',exact:true}).click();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.screenshot({path:'../docs/screenshots/mobile.png',fullPage:true});
+  const dimensions=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].map(e=>({tag:e.tagName,cls:e.className,right:e.getBoundingClientRect().right,display:getComputedStyle(e).display})).filter(e=>e.right>innerWidth+1 && e.display!=='none').slice(0,20)}));
+  expect(dimensions.scroll,JSON.stringify(dimensions)).toBeLessThanOrEqual(dimensions.width);
+});
